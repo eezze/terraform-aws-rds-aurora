@@ -28,12 +28,6 @@ variable "allowed_security_groups" {
   default     = []
 }
 
-variable "allowed_cidr_blocks" {
-  description = "A list of CIDR blocks which are allowed to access the database"
-  type        = list(string)
-  default     = []
-}
-
 variable "vpc_id" {
   description = "VPC ID"
   type        = string
@@ -374,19 +368,6 @@ variable "s3_import" {
   description = "Configuration map used to restore from a Percona Xtrabackup in S3 (only MySQL is supported)"
   type        = map(string)
   default     = null
-}
-
-# Enhanced monitoring role
-variable "create_monitoring_role" {
-  description = "Whether to create the IAM role for RDS enhanced monitoring"
-  type        = bool
-  default     = true
-}
-
-variable "monitoring_role_arn" {
-  description = "IAM role used by RDS to send enhanced monitoring metrics to CloudWatch"
-  type        = string
-  default     = ""
 }
 
 variable "iam_role_name" {
