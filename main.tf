@@ -4,9 +4,6 @@ locals {
   master_password      = var.create_cluster && var.create_random_password && var.is_primary_cluster ? random_password.master_password[0].result : var.password
   backtrack_window     = (var.engine == "aurora-mysql" || var.engine == "aurora") && var.engine_mode != "serverless" ? var.backtrack_window : 0
 
-  rds_enhanced_monitoring_arn = var.create_monitoring_role ? join("", aws_iam_role.rds_enhanced_monitoring.*.arn) : var.monitoring_role_arn
-
-  # TODO - remove coalesce() at next breaking change - adding existing name as fallback to maintain backwards compatibility
   iam_role_name = var.iam_role_use_name_prefix ? null : coalesce(var.iam_role_name, "rds-enhanced-monitoring-${var.name}")
 
   name = "aurora-${var.name}"
@@ -73,11 +70,12 @@ resource "aws_rds_cluster" "_" {
   snapshot_identifier                 = var.snapshot_identifier
   storage_encrypted                   = var.storage_encrypted
   apply_immediately                   = var.apply_immediately
-  db_cluster_parameter_group_name     = var.db_cluster_parameter_group_name
   iam_database_authentication_enabled = var.iam_database_authentication_enabled
   backtrack_window                    = local.backtrack_window
   copy_tags_to_snapshot               = var.copy_tags_to_snapshot
   iam_roles                           = var.iam_roles
+
+  db_cluster_parameter_group_name = aws_rds_cluster_parameter_group._.id
 
   enabled_cloudwatch_logs_exports = var.enabled_cloudwatch_logs_exports
 
@@ -117,10 +115,10 @@ resource "aws_rds_cluster_instance" "_" {
   instance_class                  = try(lookup(var.instances_parameters[count.index], "instance_type"), count.index > 0 ? coalesce(var.instance_type_replica, var.instance_type) : var.instance_type)
   publicly_accessible             = try(lookup(var.instances_parameters[count.index], "publicly_accessible"), var.publicly_accessible)
   db_subnet_group_name            = local.db_subnet_group_name
-  db_parameter_group_name         = var.db_parameter_group_name
+  db_parameter_group_name         = aws_db_parameter_group._.id
   preferred_maintenance_window    = var.preferred_maintenance_window
   apply_immediately               = var.apply_immediately
-  monitoring_role_arn             = local.rds_enhanced_monitoring_arn
+  monitoring_role_arn             = join("", aws_iam_role.rds_enhanced_monitoring.*.arn)
   monitoring_interval             = var.monitoring_interval
   auto_minor_version_upgrade      = var.auto_minor_version_upgrade
   promotion_tier                  = try(lookup(var.instances_parameters[count.index], "instance_promotion_tier"), count.index + 1)
@@ -155,7 +153,7 @@ data "aws_iam_policy_document" "monitoring_rds_assume_role" {
 }
 
 resource "aws_iam_role" "rds_enhanced_monitoring" {
-  count = var.create_cluster && var.create_monitoring_role && var.monitoring_interval > 0 ? 1 : 0
+  count = var.create_cluster && var.monitoring_interval > 0 ? 1 : 0
 
   name        = local.iam_role_name
   description = var.iam_role_description
@@ -173,7 +171,7 @@ resource "aws_iam_role" "rds_enhanced_monitoring" {
 }
 
 resource "aws_iam_role_policy_attachment" "rds_enhanced_monitoring" {
-  count = var.create_cluster && var.create_monitoring_role && var.monitoring_interval > 0 ? 1 : 0
+  count = var.create_cluster && var.monitoring_interval > 0 ? 1 : 0
 
   role       = aws_iam_role.rds_enhanced_monitoring[0].name
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
