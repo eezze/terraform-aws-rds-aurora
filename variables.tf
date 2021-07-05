@@ -4,12 +4,6 @@ variable "create_cluster" {
   default     = true
 }
 
-variable "create_security_group" {
-  description = "Whether to create security group for RDS cluster"
-  type        = bool
-  default     = true
-}
-
 variable "name" {
   description = "Name used across resources created"
   type        = string
@@ -441,4 +435,30 @@ variable "iam_role_max_session_duration" {
   description = "Maximum session duration (in seconds) that you want to set for the role"
   type        = number
   default     = null
+}
+
+# db parameter group
+variable "db_parameter_group_family" {
+  description = "The family of the DB parameter group"
+  type        = string
+  default     = null
+}
+
+variable "db_parameter_group_parameters" {
+  description = "A list of DB parameter maps to apply"
+  type        = list(map(string))
+  default     = []
+}
+
+# db cluster parameter group
+variable "db_cluster_parameter_group_family" {
+  description = "The family of the DB parameter group"
+  type        = string
+  default     = null
+}
+
+variable "db_cluster_parameter_group_parameters" {
+  description = "A list of DB parameter maps to apply"
+  type        = list(map(string))
+  default     = []
 }

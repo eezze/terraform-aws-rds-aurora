@@ -1,14 +1,13 @@
 locals {
   port                 = var.port == "" ? (var.engine == "aurora-postgresql" ? 5432 : 3306) : var.port
-  db_subnet_group_name = var.db_subnet_group_name == "" ? join("", aws_db_subnet_group.this.*.name) : var.db_subnet_group_name
+  db_subnet_group_name = var.db_subnet_group_name == "" ? join("", aws_db_subnet_group._.*.name) : var.db_subnet_group_name
   master_password      = var.create_cluster && var.create_random_password && var.is_primary_cluster ? random_password.master_password[0].result : var.password
   backtrack_window     = (var.engine == "aurora-mysql" || var.engine == "aurora") && var.engine_mode != "serverless" ? var.backtrack_window : 0
 
   rds_enhanced_monitoring_arn = var.create_monitoring_role ? join("", aws_iam_role.rds_enhanced_monitoring.*.arn) : var.monitoring_role_arn
-  rds_security_group_id       = join("", aws_security_group.this.*.id)
 
   # TODO - remove coalesce() at next breaking change - adding existing name as fallback to maintain backwards compatibility
-  iam_role_name        = var.iam_role_use_name_prefix ? null : coalesce(var.iam_role_name, "rds-enhanced-monitoring-${var.name}")
+  iam_role_name = var.iam_role_use_name_prefix ? null : coalesce(var.iam_role_name, "rds-enhanced-monitoring-${var.name}")
 
   name = "aurora-${var.name}"
 }
@@ -34,7 +33,7 @@ resource "random_id" "snapshot_identifier" {
   byte_length = 4
 }
 
-resource "aws_db_subnet_group" "this" {
+resource "aws_db_subnet_group" "_" {
   count = var.create_cluster && var.db_subnet_group_name == "" ? 1 : 0
 
   name        = var.name
@@ -46,7 +45,7 @@ resource "aws_db_subnet_group" "this" {
   })
 }
 
-resource "aws_rds_cluster" "this" {
+resource "aws_rds_cluster" "_" {
   count = var.create_cluster ? 1 : 0
 
   global_cluster_identifier           = var.global_cluster_identifier
@@ -70,7 +69,7 @@ resource "aws_rds_cluster" "this" {
   preferred_maintenance_window        = var.engine_mode == "serverless" ? null : var.preferred_maintenance_window
   port                                = local.port
   db_subnet_group_name                = local.db_subnet_group_name
-  vpc_security_group_ids              = compact(concat(aws_security_group.this.*.id, var.vpc_security_group_ids))
+  vpc_security_group_ids              = var.vpc_security_group_ids
   snapshot_identifier                 = var.snapshot_identifier
   storage_encrypted                   = var.storage_encrypted
   apply_immediately                   = var.apply_immediately
@@ -108,11 +107,11 @@ resource "aws_rds_cluster" "this" {
   tags = merge(var.tags, var.cluster_tags)
 }
 
-resource "aws_rds_cluster_instance" "this" {
+resource "aws_rds_cluster_instance" "_" {
   count = var.create_cluster ? (var.replica_scale_enabled ? var.replica_scale_min : var.replica_count) : 0
 
   identifier                      = try(lookup(var.instances_parameters[count.index], "instance_name"), "${var.name}-${count.index + 1}")
-  cluster_identifier              = element(concat(aws_rds_cluster.this.*.id, [""]), 0)
+  cluster_identifier              = element(concat(aws_rds_cluster._.*.id, [""]), 0)
   engine                          = var.engine
   engine_version                  = var.engine_version
   instance_class                  = try(lookup(var.instances_parameters[count.index], "instance_type"), count.index > 0 ? coalesce(var.instance_type_replica, var.instance_type) : var.instance_type)
@@ -140,9 +139,9 @@ resource "aws_rds_cluster_instance" "this" {
   tags = var.tags
 }
 
-################################################################################
+#-------------------------------------------------------------------------------
 # Enhanced Monitoring
-################################################################################
+#-------------------------------------------------------------------------------
 
 data "aws_iam_policy_document" "monitoring_rds_assume_role" {
   statement {
@@ -180,16 +179,16 @@ resource "aws_iam_role_policy_attachment" "rds_enhanced_monitoring" {
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }
 
-################################################################################
+#-------------------------------------------------------------------------------
 # Autoscaling
-################################################################################
+#-------------------------------------------------------------------------------
 
 resource "aws_appautoscaling_target" "read_replica_count" {
   count = var.create_cluster && var.replica_scale_enabled ? 1 : 0
 
   max_capacity       = var.replica_scale_max
   min_capacity       = var.replica_scale_min
-  resource_id        = "cluster:${element(concat(aws_rds_cluster.this.*.cluster_identifier, [""]), 0)}"
+  resource_id        = "cluster:${element(concat(aws_rds_cluster._.*.cluster_identifier, [""]), 0)}"
   scalable_dimension = "rds:cluster:ReadReplicaCount"
   service_namespace  = "rds"
 }
@@ -199,7 +198,7 @@ resource "aws_appautoscaling_policy" "autoscaling_read_replica_count" {
 
   name               = "target-metric"
   policy_type        = "TargetTrackingScaling"
-  resource_id        = "cluster:${element(concat(aws_rds_cluster.this.*.cluster_identifier, [""]), 0)}"
+  resource_id        = "cluster:${element(concat(aws_rds_cluster._.*.cluster_identifier, [""]), 0)}"
   scalable_dimension = "rds:cluster:ReadReplicaCount"
   service_namespace  = "rds"
 
@@ -214,4 +213,50 @@ resource "aws_appautoscaling_policy" "autoscaling_read_replica_count" {
   }
 
   depends_on = [aws_appautoscaling_target.read_replica_count]
+}
+#-------------------------------------------------------------------------------
+# Database and Cluster Parameter Groups
+#-------------------------------------------------------------------------------
+resource "aws_db_parameter_group" "_" {
+  count = var.create_cluster ? 1 : 0
+
+  name        = "${local.name}-db-parameter-group"
+  description = "${local.name}-db-parameter-group created by Terraform"
+  family      = var.db_parameter_group_family
+
+  dynamic "parameter" {
+    for_each = var.db_parameter_group_parameters
+    content {
+      name         = parameter.value.name
+      value        = parameter.value.value
+      apply_method = lookup(parameter.value, "apply_method", null)
+    }
+  }
+
+  tags = local.tags
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_rds_cluster_parameter_group" "_" {
+  name        = "${local.name}-cluster-parameter-group"
+  description = "${local.name}-cluster-parameter-group created by Terraform"
+  family      = var.db_cluster_parameter_group_family
+
+  dynamic "parameter" {
+    for_each = var.db_cluster_parameter_group_parameters
+    content {
+      name         = parameter.value.name
+      value        = parameter.value.value
+      apply_method = lookup(parameter.value, "apply_method", null)
+    }
+  }
+
+  tags = local.tags
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
